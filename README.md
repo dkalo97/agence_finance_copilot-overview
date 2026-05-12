@@ -1,155 +1,146 @@
-# Agence
+# Agence — AI-Powered Personal Finance & Investment Copilot
 
-AI-powered personal finance and investment copilot. Parallel agents analyze spending, anomalies, savings goals, portfolio health, and market context. An LLM-as-judge layer synthesizes all agent outputs into a single ranked insight feed.
+Agence is a full-stack personal finance application that deploys multiple AI agents in parallel to analyze a user's complete financial picture and surface prioritized, actionable insights.
+
+The core idea: **Robinhood and Rocket Money exist but don't talk to each other.** Agence connects spending behavior to investment behavior — something no current consumer product does.
+
+---
 
 ## What It Does
 
-- Connects bank accounts via Plaid (transactions, balances)
-- Connects paper trading account via Alpaca (positions, quotes, trade execution)
-- Runs 7 analysis agents in parallel — spending, anomalies, goals, portfolio, market context, autopilot, watchlist
-- Synthesizes insights via `claude-sonnet-4-6` LLM-as-judge with explicit scoring dimensions
-- Supports autopilot paper trading with configurable rules
+- **Connect bank accounts** via Plaid — transactions, balances, categories
+- **Connect investment accounts** via Alpaca — portfolio positions, P&L, paper trading
+- **12 parallel AI agents** analyze every dimension of your finances simultaneously
+- **LLM-as-judge** (Claude) synthesizes agent outputs into a single prioritized insight feed
+- **Autopilot paper trading** — configure rule-based strategies that execute automatically
+- **AI chat** with cross-session memory and financial tools built in
+- **Household mode** — shared dashboard and goals with a partner
+- **Budgets** — AI-generated budget plans based on actual spending history
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    User["User (Browser)"]
+
+    subgraph Frontend["Frontend — React"]
+        Dashboard
+        Insights
+        Portfolio
+        Expenses
+        Chat
+        Automations
+    end
+
+    subgraph Backend["Backend — Node.js / Express"]
+        API["REST API (/api/v1)"]
+
+        subgraph Orchestrator["Orchestrator"]
+            Runner["Promise.all agent runner"]
+            Judge["LLM-as-Judge (Claude)"]
+        end
+
+        subgraph Agents["12 Parallel Agents"]
+            spendingAgent
+            anomalyAgent
+            goalsAgent
+            portfolioAgent
+            marketContextAgent
+            autopilotAgent
+            watchlistAgent
+            crossDomainAgent
+            recurringAgent
+            budgetAgent
+            debtAgent
+            taxAgent
+        end
+    end
+
+    subgraph DataSources["External APIs"]
+        Plaid["Plaid\n(transactions, balances)"]
+        Alpaca["Alpaca\n(portfolio, paper trades)"]
+        Finnhub["Finnhub\n(news, sentiment)"]
+        Anthropic["Anthropic\n(insight synthesis, chat)"]
+    end
+
+    DB[("PostgreSQL\n(Neon)")]
+
+    User --> Frontend
+    Frontend --> API
+    API --> Runner
+    Runner --> Agents
+    Agents --> Judge
+    Judge --> API
+
+    Plaid --> API
+    Alpaca --> API
+    Finnhub --> API
+    Anthropic --> Judge
+
+    API --> DB
+```
+
+---
+
+## Agent Architecture
+
+All agents are **pure functions** — `(userData, marketData) => insights[]`. They run in parallel via `Promise.all` and never touch the database or make API calls directly. Data assembly and normalization happens before the agents run.
+
+| Agent | Data Sources | What It Analyzes |
+|---|---|---|
+| `spendingAgent` | Plaid | Categorized spending, month-over-month changes |
+| `anomalyAgent` | Plaid | Unusual or outlier transactions |
+| `goalsAgent` | Plaid + Alpaca | Savings goal pace and projected completion |
+| `portfolioAgent` | Alpaca | Concentration risk, unrealized P&L, position health |
+| `marketContextAgent` | Alpaca + Finnhub | 24h price changes, news sentiment |
+| `autopilotAgent` | Alpaca | Rule-based paper trade signal evaluation |
+| `watchlistAgent` | Alpaca + Finnhub | Price movers and sentiment for watched tickers |
+| `crossDomainAgent` | Plaid + Alpaca | Spending vs. investment alignment, sector overlap |
+| `recurringAgent` | Plaid | Subscription detection, upcoming charges |
+| `budgetAgent` | Plaid | Monthly budget alerts and overages |
+| `debtAgent` | Plaid | High-interest credit card debt detection |
+| `taxAgent` | Alpaca | Tax-loss harvesting opportunities, unrealized gain alerts |
+
+---
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | React (functional components) |
+| Frontend | React (functional components, CSS variables, dark mode) |
 | Backend | Node.js + Express |
-| Database | PostgreSQL |
-| Auth | JWT |
-| LLM | Anthropic Claude (`claude-sonnet-4-6`) |
-| Testing | Jest + Supertest |
+| Database | PostgreSQL (Neon serverless) |
+| Auth | JWT (HS256) |
+| LLM | Anthropic Claude (claude-sonnet-4-6) |
+| Bank data | Plaid (production) |
+| Investment data | Alpaca (paper environment) |
+| News/sentiment | Finnhub |
+| Hosting | Vercel (frontend) + Render (backend) |
+| Testing | Jest + Supertest + fast-check (property tests) + Stryker (mutation) |
 
-## API Responsibility Map
+---
 
-| API | Role |
-|---|---|
-| Plaid | Bank transactions and balances only |
-| Alpaca | Portfolio positions, quotes, paper trade execution |
-| Finnhub | News articles and sentiment scoring only |
-| Anthropic | LLM-as-judge insight synthesis |
+## Key Design Decisions
 
-## Project Structure
+**API boundary enforcement**: Alpaca handles only price/portfolio/trade data. Plaid handles only banking/transactions. Finnhub handles only news/sentiment. These boundaries are documented and enforced — mixing them would produce incorrect financial data.
 
-```
-server/
-  agents/           # Pure analysis functions — (userData, marketData) => insights[]
-  orchestrator/     # Parallel agent runner (Promise.all) + LLM-as-judge
-  routes/           # Express API routes (/api/v1/:resource)
-  db/               # All DB queries via queries.js — no SQL anywhere else
-  middleware/       # JWT auth, error handling
-client/
-  src/              # React frontend
-docs/               # PRD, HW documentation
-project-memory/     # Progress tracking, architectural decisions, batch-fixes log
-```
+**Sign convention**: Plaid amounts use positive = expense, negative = income. All agents rely on this convention. Normalization at the DB boundary converts pg string/Date types to JS numbers before agents run.
 
-## Setup
+**Streaming insights**: The judge synthesizes insights via a streaming SSE response, so the UI updates in real time as the LLM scores and ranks each insight.
 
-```bash
-# Install dependencies
-cd server && npm install
-cd ../client && npm install
+**Fingerprinting**: Each insight has a computed fingerprint based on source + type + key fields. Dismissed insights are filtered by fingerprint, not ID, so they stay dismissed even after a re-run.
 
-# Configure environment
-cp server/.env.example server/.env
-# Fill in: DATABASE_URL, JWT_SECRET, PLAID_*, ALPACA_*, FINNHUB_API_KEY, ANTHROPIC_API_KEY
+---
 
-# Run development server
-cd server && npm run dev
-```
+## Security Posture
 
-## Commands
-
-```bash
-cd server
-npm run dev        # Express + nodemon
-npm run lint       # ESLint — must pass clean before every commit
-npm test           # Jest — must pass clean before every commit
-npm run test:watch # TDD mode
-```
-
-## Architecture Diagram
-
-```mermaid
-flowchart TD
-    User["👤 User (Browser)"]
-
-    subgraph Frontend["Frontend — React (Vercel)"]
-        UI["Login / Dashboard / Insights"]
-        AC["AuthContext (JWT)"]
-    end
-
-    subgraph Backend["Backend — Express (Render)"]
-        Auth["POST /auth/register\nPOST /auth/login"]
-        Insights["GET /insights"]
-        JWT["JWT Middleware"]
-
-        subgraph Orchestrator["Orchestrator"]
-            PA["Promise.all"]
-            SA["spendingAgent"]
-            AN["anomalyAgent"]
-            GA["goalsAgent"]
-            PF["portfolioAgent"]
-            MC["marketContextAgent"]
-            AP["autopilotAgent"]
-            WA["watchlistAgent"]
-            JU["LLM-as-Judge\n(claude-sonnet-4-6)"]
-        end
-    end
-
-    subgraph DataLayer["Data Layer"]
-        PG[("PostgreSQL\n(agence_db)")]
-        QS["queries.js\n(SQL quarantine)"]
-    end
-
-    subgraph ExternalAPIs["External APIs"]
-        Plaid["Plaid\n(transactions/balances)"]
-        Alpaca["Alpaca Paper\n(positions/quotes/trades)"]
-        Finnhub["Finnhub\n(news/sentiment)"]
-        Claude["Anthropic API\n(claude-sonnet-4-6)"]
-    end
-
-    User -->|HTTPS| Frontend
-    UI -->|axios + Bearer token| Auth
-    UI -->|axios + Bearer token| Insights
-    Auth -->|bcrypt + JWT| PG
-    Insights --> JWT --> PA
-    PA --> SA & AN & GA & PF & MC & AP & WA
-    SA & AN & GA -->|userData| Plaid
-    PF & MC & AP & WA -->|marketData| Alpaca
-    MC & WA -->|news| Finnhub
-    PA -->|agentOutputs| JU
-    JU -->|ranked insights| Claude
-    QS <-->|pool.query| PG
-    Backend <--> QS
-```
-
-## Architecture Notes
-
-- **Agent purity** — agents are pure functions with no side effects, no DB calls, no API calls
-- **Parallel execution** — orchestrator runs all agents via `Promise.all`, never sequentially
-- **SQL quarantine** — all queries go through `server/db/queries.js`, zero exceptions
-- **Paper trading only** — `ALPACA_PAPER=true` is hardcoded and never toggled off
-
-## Live Deployment
-
-| | URL |
-|---|---|
-| Frontend | https://agence-flame.vercel.app |
-| Backend API | https://cs7180-project3-agence.onrender.com |
-| Health check | https://cs7180-project3-agence.onrender.com/health |
-
-## Demo Login
-
-A pre-configured account is available for graders and reviewers — bank accounts and paper trading are already connected, data is pre-populated:
-
-- **Email:** `kalo13@hotmail.com`
-- **Password:** `Agence123!` <!-- pragma: allowlist secret -->
-
-Log in and navigate to **Insights → Refresh** to run all agents. The Dashboard, Expenses, Goals, Portfolio, and Watchlist pages will reflect live data.
-
-## Connecting a Paper Trading Account (Alpaca)
-
-Alpaca is connected server-side via environment variables — users do not configure Alpaca credentials. The app always uses Alpaca's paper trading environment (`ALPACA_PAPER=true` is hardcoded). To test portfolio features, place a paper trade on the **Portfolio** page.
+- All routes behind JWT auth middleware
+- All DB queries parameterized via `pg` placeholders — no string-concatenated SQL
+- SQL quarantined in `server/db/queries.js` — no queries outside this file
+- Passwords bcrypt-hashed; reset tokens single-use with 1h expiry
+- Rate limiting on auth routes (10 req/15 min)
+- `helmet()` enabled; CORS restricted to known origins
+- SSE streams use one-time tokens (60s OTP) — session JWT never in URL
+- `npm audit` + `detect-secrets` gates in CI
